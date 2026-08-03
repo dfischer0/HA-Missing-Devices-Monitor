@@ -366,7 +366,7 @@ sequence:
           {% set missing_flag = (is_bad and bad_for >= unavailable_threshold) %}
           {% if missing_flag %}
             {% set since_secs = bad_for | int %}
-            {% set name = state_attr(eid, 'friendly_name') or device_attr(eid, 'name') or eid %}
+            {% set name = device_attr(dev, 'name_by_user') or device_attr(dev, 'name') or state_attr(eid, 'friendly_name') or eid %}
             {% set area = area_name(eid) %}
             {{ comma() }} {
               "device_id": "{{ dev }}",
