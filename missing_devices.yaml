@@ -124,6 +124,22 @@ blueprint:
       selector:
         label:
           multiple: false
+    entity_id_exclude_patterns:
+      name: Entity ID Exclude Patterns (regex)
+      description: >
+        One regular expression per line. Any entity whose entity_id matches
+        ANY of these patterns is skipped entirely when building the
+        candidate list — regardless of the Ignored Devices list or Ignore
+        Label. Matching uses `regex_search`, so a pattern matches if it is
+        found ANYWHERE in the entity_id, not just at the start; anchor with
+        `^`/`$` for exact matches (e.g. `^sensor\.guest_.*$`). A simple
+        substring like `_battery$` or `printer_ink` also works. Leave blank
+        to disable this filter. Blank lines and lines starting with `#` are
+        ignored.
+      default: ""
+      selector:
+        text:
+          multiline: true
     slow_talkers_devices:
       name: Slow-Talking Devices
       description: Devices that legitimately stay unavailable longer and should use the slow buffer.
@@ -153,6 +169,7 @@ sequence:
       ignored_devices_text_raw: !input ignored_devices_text
       slow_talkers_list: !input slow_talkers_devices
       slow_talkers_text_raw: !input slow_talkers_text
+      entity_id_exclude_patterns_raw: !input entity_id_exclude_patterns
       ignored_devices_json: >-
         {% set from_selector = ignored_devices_list %}
         {% set manual = ignored_devices_text_raw | default('', true) %}
@@ -202,6 +219,20 @@ sequence:
       ignored_devices: "{{ ignored_devices_json | replace('\n','') | from_json }}"
       slow_talkers: "{{ slow_talkers_json | replace('\n','') | from_json }}"
       ignored_label_entity_ids: "{{ label_entities(IGNORE_LABEL) if IGNORE_LABEL else [] }}"
+      entity_id_exclude_regex: >-
+        {# Build one combined regex out of every non-empty, non-comment line
+           in the Entity ID Exclude Patterns input. Each line is treated as
+           its own regex and OR'd together via non-capturing groups, e.g.
+           two lines "^sensor\.guest_.*$" and "_battery$" become
+           "(?:^sensor\.guest_.*$)|(?:_battery$)". Empty string = no filter. #}
+        {% set raw_lines = entity_id_exclude_patterns_raw.splitlines()
+           if entity_id_exclude_patterns_raw else [] %}
+        {% set patterns = raw_lines
+           | map('trim')
+           | reject('equalto', '')
+           | rejectattr(0, 'equalto', '#')
+           | list %}
+        {{ ('(?:' ~ (patterns | join(')|(?:')) ~ ')') if patterns else '' }}
     alias: Configuration options - edit this
 
   # ── Runtime guardrail: skip shortly after startup ───────────────────────────
@@ -230,12 +261,17 @@ sequence:
       candidate_info_json: >-
         {# 1) Gather a pre-filtered list of entities worth inspecting
               based on the listed domains, excluding anything tagged
-              with the Ignore Label
+              with the Ignore Label or matching an Entity ID Exclude
+              Pattern
         #}
-        {% set candidates = states
+        {% set base_candidates = states
           | selectattr('domain', 'in', INCLUDE_DOMAINS)
           | rejectattr('entity_id', 'in', ignored_label_entity_ids)
           | list %}
+        {% set candidates = (base_candidates
+            | rejectattr('entity_id', 'search', entity_id_exclude_regex)
+            | list)
+          if entity_id_exclude_regex else base_candidates %}
         {% set visible = candidates if MAX_ENTITIES_PROCESSED <= 0
            else candidates[:MAX_ENTITIES_PROCESSED] %}
         {# 2) Emit JSON without mutating any list to avoid heavy State objects #}
